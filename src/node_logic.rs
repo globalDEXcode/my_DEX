@@ -79,6 +79,7 @@ pub struct OrderRequest {
     pub amount: f64,
     pub price: f64,
     pub side: OrderSide,
+    pub auth_token: Option<String>,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
