@@ -202,7 +202,8 @@ impl DexNode {
         }
 
         // 1) check free
-        let mut bals = self.balances.lock().unwrap();
+        let mut bals = self.balances.lock()
+    .map_err(|_| DexError::Other("Zugriff auf balances fehlgeschlagen (Mutex poisoned)".into()))?;
         let bal_key = (req.user_id.clone(), req.coin_to_sell.clone());
         let (free, locked) = bals.entry(bal_key.clone()).or_insert((0.0, 0.0));
         if *free < req.amount {
@@ -310,9 +311,9 @@ impl DexNode {
                 Ok(ntp_ts) => {
                     debug!("NTP server={} => got={:?}", srv, ntp_ts);
                     let system_now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64;
+    .duration_since(UNIX_EPOCH)
+    .map_err(|e| anyhow::anyhow!("Systemzeitfehler: {:?}", e))?
+    .as_secs() as i64;
                     let offset = (ntp_ts.sec as i64) - system_now;
                     offsets.push(offset);
                 }
@@ -356,7 +357,7 @@ impl DexNode {
         }
     
         info!("NTP => akzeptierter Offset = {}s", median_offset);
-        Ok(())
+        Ok (())
     }
 
 
@@ -369,8 +370,8 @@ impl DexNode {
         info!("Trying NAT-UPnP => searching gateway...");
         match search_gateway(Default::default()).await {
             Ok(gw) => {
-                let local_addr = self.config.listen_addr.parse::<SocketAddr>()
-                    .unwrap_or_else(|_| "127.0.0.1:9000".parse().unwrap());
+                let local_addr: SocketAddr = self.config.listen_addr.parse()
+                    .map_err(|e| anyhow::anyhow!("Ungültige listen_addr: {}", e))?;
                 let local_port = local_addr.port();
                 let external_port = local_port;
                 let desc = "my_dex node NAT mapping";
