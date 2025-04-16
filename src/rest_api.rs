@@ -5,7 +5,7 @@
 use axum::{
     routing::{get, post},
     extract::{Path, State, Json},
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
     response::IntoResponse,
     Router,
 };
@@ -13,9 +13,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn, error};
 
+use base64::{engine::general_purpose, Engine as _};
 use crate::node_logic::{DexNode, OrderRequest};
 use crate::error::DexError;
 use crate::shard_logic::shard_manager::ShardManager;
+use crate::identity::access_control::verify_message;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -60,14 +62,51 @@ pub struct ShardInfoEntry {
     pub replicas: Vec<String>,
 }
 
+fn verify_request_signature(headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
+    let pubkey = headers
+        .get("X-Public-Key")
+        .ok_or("Fehlender PublicKey")?
+        .to_str().map_err(|_| "PublicKey ungültig")?;
+
+    let sig = headers
+        .get("X-Signature")
+        .ok_or("Fehlende Signatur")?
+        .to_str().map_err(|_| "Signatur ungültig")?;
+
+    let timestamp = headers
+        .get("X-Timestamp")
+        .ok_or("Fehlender Timestamp")?
+        .to_str().map_err(|_| "Timestamp ungültig")?;
+
+    let pubkey_bytes = general_purpose::STANDARD.decode(pubkey).map_err(|_| "PublicKey Base64 Fehler")?;
+    let sig_bytes = general_purpose::STANDARD.decode(sig).map_err(|_| "Signatur Base64 Fehler")?;
+    let mut message = Vec::new();
+    message.extend_from_slice(body);
+    message.extend_from_slice(timestamp.as_bytes());
+
+    verify_message(&pubkey_bytes, &message, &sig_bytes)
+        .map_err(|_| "Signaturprüfung fehlgeschlagen".into())?
+        .then(|| ()).ok_or("Signatur ungültig".into())
+}
+
 pub async fn ping() -> impl IntoResponse {
     (StatusCode::OK, Json(ApiResponse::success("pong")))
 }
 
 pub async fn place_order(
     State(state): State<AppState>,
-    Json(req): Json<OrderRequest>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    if let Err(e) = verify_request_signature(&headers, &body) {
+        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()> ::error(&e)));
+    }
+
+    let req: OrderRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(ApiResponse::<()> ::error("Fehler beim Parsen"))),
+    };
+
     if state.node.watchtower.is_banned(&req.user_id) {
         warn!("Gebannter Nutzer {} versucht Order zu platzieren", req.user_id);
         return (
@@ -78,20 +117,27 @@ pub async fn place_order(
 
     match state.node.place_order(req) {
         Ok(_) => (StatusCode::OK, Json(ApiResponse::success("Order akzeptiert"))),
-        Err(e) => {
-            warn!("Fehler bei Order: {:?}", e);
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiResponse::<()> ::error(&format!("{:?}", e))),
-            )
-        }
+        Err(_) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()> ::error("Order abgelehnt")),
+        )
     }
 }
 
 pub async fn get_balance(
     State(state): State<AppState>,
-    Json(req): Json<BalanceQuery>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    if let Err(e) = verify_request_signature(&headers, &body) {
+        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()> ::error(&e)));
+    }
+
+    let req: BalanceQuery = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(ApiResponse::<()> ::error("Fehler beim Parsen"))),
+    };
+
     if state.node.watchtower.is_banned(&req.user_id) {
         return (
             StatusCode::FORBIDDEN,
@@ -171,7 +217,16 @@ pub async fn get_single_shard(
 pub async fn force_replicate_shard(
     Path(shard_id): Path<u32>,
     State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    if let Err(e) = verify_request_signature(&headers, &body) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<()> ::error(&e)),
+        );
+    }
+
     match state.shard_manager.replicate_shard_to_new_node(shard_id) {
         Ok(_) => (
             StatusCode::OK,
@@ -181,7 +236,7 @@ pub async fn force_replicate_shard(
             error!("Fehler bei Replikation von Shard {}: {:?}", shard_id, e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()> ::error(&format!("Fehler: {:?}", e))),
+                Json(ApiResponse::<()> ::error("Replikation fehlgeschlagen")),
             )
         }
     }
@@ -197,3 +252,4 @@ pub fn build_rest_api(state: AppState) -> Router {
         .route("/api/replicate_shard/:id", post(force_replicate_shard))
         .with_state(state)
 }
+
