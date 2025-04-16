@@ -1,5 +1,5 @@
 //////////////////////////////////////
-/// my_dex/src/rest_api.rs
+/// my_dex/src/rest_api.rs (abgesichert)
 //////////////////////////////////////
 
 use axum::{
@@ -161,7 +161,17 @@ pub async fn get_balance(
     (StatusCode::OK, Json(ApiResponse::success(bal)))
 }
 
-pub async fn get_all_shards(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_all_shards(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = verify_request_signature(&headers, b"") {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<()> ::error(&e, "AUTH_FAILED")),
+        );
+    }
+
     let shard_info_guard = state.shard_manager.shard_info.lock();
     let shard_info = match shard_info_guard {
         Ok(guard) => guard,
@@ -187,7 +197,15 @@ pub async fn get_all_shards(State(state): State<AppState>) -> impl IntoResponse 
 pub async fn get_single_shard(
     Path(shard_id): Path<u32>,
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
+    if let Err(e) = verify_request_signature(&headers, b"") {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<()> ::error(&e, "AUTH_FAILED")),
+        );
+    }
+
     let shard_info_guard = state.shard_manager.shard_info.lock();
     let shard_info = match shard_info_guard {
         Ok(guard) => guard,
