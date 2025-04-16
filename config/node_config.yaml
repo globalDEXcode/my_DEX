@@ -2,9 +2,11 @@
 #
 # NEU (Sicherheitsanmerkungen):
 #  - "keystore_pass", "hsm_pin", "turn_password" etc. stehen hier im Klartext – in Produktion solltest du
-#    solche Secrets besser in Env Vars oder K8S-Secrets ablegen.
-#  - "SUPER_SECRET" und "1234" => nur Demowerte.
+#     solche Secrets besser in Env Vars oder K8S-Secrets ablegen.
+#     Beispielwerte: <nicht verwenden> – bitte mit Secrets oder Vault integrieren
 #  - "db_max_retries", "merge_backoff_sec", etc. => plausible, könntest du per Config-Signatur validieren.
+
+# node_config.yaml
 
 node_id: "NodeA"
 listen_addr: "127.0.0.1:9000"
