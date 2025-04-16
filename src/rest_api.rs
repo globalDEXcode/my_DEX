@@ -99,7 +99,20 @@ pub async fn get_balance(
         );
     }
 
-    let bal = state.node.user_get_free_balance(&req.user_id, &req.coin);
+    let bal = match state.node.balances.lock() {
+        Ok(bals) => {
+            let key = (req.user_id.clone(), req.coin.clone());
+            bals.get(&key).cloned().unwrap_or((0.0, 0.0)).0
+        }
+        Err(e) => {
+            error!("Mutex poison detected in get_balance: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<()> ::error("Interner Fehler beim Zugriff auf Benutzersaldo")),
+            );
+        }
+    };
+
     (StatusCode::OK, Json(ApiResponse::success(bal)))
 }
 
