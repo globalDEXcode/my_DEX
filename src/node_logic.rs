@@ -293,7 +293,7 @@ impl DexNode {
             return Ok(());
         }
         info!("Starting NTP sync => servers = {:?}", self.config.ntp_servers);
-
+    
         let futures_list = self.config.ntp_servers.iter()
             .map(|server_addr| async move {
                 let opts = sntpc::Options::default().with_timeout(Duration::from_secs(3));
@@ -301,10 +301,10 @@ impl DexNode {
                 (server_addr.clone(), res)
             })
             .collect::<Vec<_>>();
-
-        let results = join_all(futures_list).await;
+    
+        let results = futures::future::join_all(futures_list).await;
         let mut offsets = vec![];
-
+    
         for (srv, res) in results {
             match res {
                 Ok(ntp_ts) => {
@@ -321,22 +321,44 @@ impl DexNode {
                 }
             }
         }
-
+    
         if offsets.is_empty() {
             warn!("All NTP queries failed => no offset update");
             return Ok(());
         }
-
+    
         offsets.sort_unstable();
         let mid = offsets.len() / 2;
         let median_offset = offsets[mid];
+    
+        // Sicherheitsprüfung: Nur kleine Abweichung zulassen (z. B. max ±10 Sekunden)
+        let max_allowed_offset = 10; // Sekunden
+    
+        if median_offset.abs() > max_allowed_offset {
+            warn!(
+                "NTP-Zeitabweichung zu groß ({}s > {}s) – mögliche Zeitmanipulation oder unsichere Quelle!",
+                median_offset,
+                max_allowed_offset
+            );
+    
+            // Optional: Node-Abbruch erzwingen
+            // return Err(anyhow::anyhow!(
+            //     "Unsichere Zeitquelle: NTP-Zeitabweichung {}s > erlaubt {}s",
+            //     median_offset,
+            //     max_allowed_offset
+            // ));
+        }
+    
+        // Offset speichern
         {
             let mut off_lock = self.ntp_time_offset.lock().unwrap();
             *off_lock = Some(median_offset);
         }
-        info!("NTP => median offset = {}s", median_offset);
+    
+        info!("NTP => akzeptierter Offset = {}s", median_offset);
         Ok(())
     }
+
 
     #[instrument(name="setup_nat_traversal", skip(self))]
     async fn setup_nat_traversal(&self) -> Result<()> {
