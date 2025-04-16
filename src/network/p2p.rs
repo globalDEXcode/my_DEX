@@ -521,7 +521,6 @@ pub trait KademliaP2PAdapter {
 
     /// Ein Ping-Call => default => wir rufen send_kademlia_msg
     fn ping_node(&self, node_id: &NodeId, addr: SocketAddr) -> bool {
-        // Erst Rate-limit check:
         if let Some(sec) = self.security() {
             if !sec.check_rate_limit(addr) {
                 return false;
@@ -530,6 +529,33 @@ pub trait KademliaP2PAdapter {
         let ping_msg = KademliaMessage::Ping(node_id.clone());
         self.send_kademlia_msg(addr, &ping_msg);
         true
+    }
+
+    /// NEU: Sichere Nachrichtensendung über Noise-Protokoll
+    fn send_kademlia_msg_secure(&self, addr: SocketAddr, msg: &KademliaMessage) -> Result<()> {
+        tokio::spawn(async move {
+            let serialized = match bincode::serialize(msg) {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Serialisierung fehlgeschlagen: {:?}", e);
+                    return;
+                }
+            };
+
+            let monitor = Arc::new(SecurityMonitor::new());
+            let mut secure = match SecureChannel::connect(&addr.to_string(), "Noise_XX_25519_ChaChaPoly_BLAKE2s", monitor).await {
+                Ok(channel) => channel,
+                Err(e) => {
+                    warn!("Verbindung fehlgeschlagen: {:?}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = secure.send(&serialized).await {
+                warn!("Senden fehlgeschlagen: {:?}", e);
+            }
+        });
+        Ok(())
     }
 }
 
