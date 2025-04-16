@@ -89,10 +89,6 @@ fn verify_request_signature(headers: &HeaderMap, body: &[u8]) -> Result<(), Stri
         .then(|| ()).ok_or("Signatur ungültig".into())
 }
 
-pub async fn ping() -> impl IntoResponse {
-    (StatusCode::OK, Json(ApiResponse::success("pong")))
-}
-
 pub async fn place_order(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -244,7 +240,6 @@ pub async fn force_replicate_shard(
 
 pub fn build_rest_api(state: AppState) -> Router {
     Router::new()
-        .route("/api/ping", get(ping))
         .route("/api/place_order", post(place_order))
         .route("/api/get_balance", post(get_balance))
         .route("/api/shards", get(get_all_shards))
@@ -252,4 +247,3 @@ pub fn build_rest_api(state: AppState) -> Router {
         .route("/api/replicate_shard/:id", post(force_replicate_shard))
         .with_state(state)
 }
-
