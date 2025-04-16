@@ -154,6 +154,12 @@ impl DexNode {
     pub async fn start(&mut self) -> Result<()> {
         info!("Node {} is starting...", self.config.node_id);
 
+            // 🔒 Absicherung: Nur starten, wenn use_noise aktiv ist
+    if !self.config.use_noise {
+        error!("Abbruch: Konfiguration use_noise=false => Unsichere Kommunikation!");
+        return Err(anyhow::anyhow!("Unsichere Konfiguration: use_noise=false"));
+    }
+
         // Integration aus Snippet: GlobalSecurity => audit_event
         if let Some(ref sec_arc) = self.global_security {
             let sec = sec_arc.lock().unwrap();
