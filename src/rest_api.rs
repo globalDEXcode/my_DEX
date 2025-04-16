@@ -29,6 +29,7 @@ pub struct AppState {
 pub struct ApiResponse<T> {
     pub success: bool,
     pub message: Option<String>,
+    pub code: Option<String>,
     pub data: Option<T>,
 }
 
@@ -37,14 +38,16 @@ impl<T: Serialize> ApiResponse<T> {
         Self {
             success: true,
             message: None,
+            code: None,
             data: Some(data),
         }
     }
 
-    pub fn error(msg: &str) -> Self {
+    pub fn error(msg: &str, code: &str) -> Self {
         Self {
             success: false,
             message: Some(msg.to_string()),
+            code: Some(code.to_string()),
             data: None,
         }
     }
@@ -95,27 +98,27 @@ pub async fn place_order(
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     if let Err(e) = verify_request_signature(&headers, &body) {
-        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()> ::error(&e)));
+        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()> ::error(&e, "AUTH_FAILED")));
     }
 
     let req: OrderRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, Json(ApiResponse::<()> ::error("Fehler beim Parsen"))),
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(ApiResponse::<()> ::error("Ungültige Anfrage", "BAD_REQUEST"))),
     };
 
     if state.node.watchtower.is_banned(&req.user_id) {
         warn!("Gebannter Nutzer {} versucht Order zu platzieren", req.user_id);
         return (
             StatusCode::FORBIDDEN,
-            Json(ApiResponse::<()> ::error("Zugriff verweigert: gesperrter Nutzer")),
+            Json(ApiResponse::<()> ::error("Zugriff verweigert", "USER_BANNED")),
         );
     }
 
     match state.node.place_order(req) {
-        Ok(_) => (StatusCode::OK, Json(ApiResponse::success("Order akzeptiert"))),
+        Ok(_) => (StatusCode::OK, Json(ApiResponse::success("OK"))),
         Err(_) => (
             StatusCode::BAD_REQUEST,
-            Json(ApiResponse::<()> ::error("Order abgelehnt")),
+            Json(ApiResponse::<()> ::error("Order abgelehnt", "ORDER_ERROR")),
         )
     }
 }
@@ -126,18 +129,18 @@ pub async fn get_balance(
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
     if let Err(e) = verify_request_signature(&headers, &body) {
-        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()> ::error(&e)));
+        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()> ::error(&e, "AUTH_FAILED")));
     }
 
     let req: BalanceQuery = match serde_json::from_slice(&body) {
         Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, Json(ApiResponse::<()> ::error("Fehler beim Parsen"))),
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(ApiResponse::<()> ::error("Ungültige Anfrage", "BAD_REQUEST"))),
     };
 
     if state.node.watchtower.is_banned(&req.user_id) {
         return (
             StatusCode::FORBIDDEN,
-            Json(ApiResponse::<()> ::error("Zugriff verweigert: gesperrter Nutzer")),
+            Json(ApiResponse::<()> ::error("Zugriff verweigert", "USER_BANNED")),
         );
     }
 
@@ -150,7 +153,7 @@ pub async fn get_balance(
             error!("Mutex poison detected in get_balance: {:?}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()> ::error("Interner Fehler beim Zugriff auf Benutzersaldo")),
+                Json(ApiResponse::<()> ::error("Interner Fehler", "INTERNAL_ERROR")),
             );
         }
     };
@@ -162,22 +165,21 @@ pub async fn get_all_shards(State(state): State<AppState>) -> impl IntoResponse 
     let shard_info_guard = state.shard_manager.shard_info.lock();
     let shard_info = match shard_info_guard {
         Ok(guard) => guard,
-        Err(poisoned) => {
+        Err(_) => {
             error!("Mutex poison detected in get_all_shards");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()> ::error("Interner Fehler beim Zugriff auf Shard-Daten")),
+                Json(ApiResponse::<()> ::error("Interner Fehler", "INTERNAL_ERROR")),
             );
         }
     };
 
-    let mut entries = vec![];
-    for (shard_id, replicas) in &shard_info.shard_replicas {
-        entries.push(ShardInfoEntry {
+    let entries: Vec<ShardInfoEntry> = shard_info.shard_replicas.iter().map(|(shard_id, replicas)| {
+        ShardInfoEntry {
             shard_id: *shard_id,
             replicas: replicas.iter().map(|id| id.to_string()).collect(),
-        });
-    }
+        }
+    }).collect();
 
     (StatusCode::OK, Json(ApiResponse::success(entries)))
 }
@@ -189,11 +191,11 @@ pub async fn get_single_shard(
     let shard_info_guard = state.shard_manager.shard_info.lock();
     let shard_info = match shard_info_guard {
         Ok(guard) => guard,
-        Err(poisoned) => {
+        Err(_) => {
             error!("Mutex poison detected in get_single_shard");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()> ::error("Interner Fehler beim Zugriff auf Shard-Daten")),
+                Json(ApiResponse::<()> ::error("Interner Fehler", "INTERNAL_ERROR")),
             );
         }
     };
@@ -219,22 +221,19 @@ pub async fn force_replicate_shard(
     if let Err(e) = verify_request_signature(&headers, &body) {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(ApiResponse::<()> ::error(&e)),
+            Json(ApiResponse::<()> ::error(&e, "AUTH_FAILED")),
         );
     }
 
     match state.shard_manager.replicate_shard_to_new_node(shard_id) {
         Ok(_) => (
             StatusCode::OK,
-            Json(ApiResponse::<()> ::success("Replikation angestoßen")),
+            Json(ApiResponse::<()> ::success("OK")),
         ),
-        Err(e) => {
-            error!("Fehler bei Replikation von Shard {}: {:?}", shard_id, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()> ::error("Replikation fehlgeschlagen")),
-            )
-        }
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<()> ::error("Replikation fehlgeschlagen", "REPL_ERROR")),
+        )
     }
 }
 
