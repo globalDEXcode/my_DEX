@@ -98,6 +98,17 @@ impl GlobalSecuritySystem {
         }
     }
 
+    /// Neue Methode zur Token-Verifikation
+    pub fn verify_token(&self, user: &str, token: &str) -> bool {
+        if token == format!("token-{}", user) {
+            debug!("Token für {} validiert", user);
+            true
+        } else {
+            warn!("Ungültiges Token für {}", user);
+            false
+        }
+    }
+    
     // 1) Rate-Limit => IP => TokenBucket
     pub fn check_rate_limit(&self, ip: &str) -> bool {
         let mut map = self.rate_limiters.lock().unwrap();
