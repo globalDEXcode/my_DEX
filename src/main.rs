@@ -47,6 +47,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
 use chrono::{Utc};
 mod metrics_tls;
+use crate::metrics_tls::init_metrics_token;
 
 
 use crate::config_loader::{load_config, NodeConfig};
