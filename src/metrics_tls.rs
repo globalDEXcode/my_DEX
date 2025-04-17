@@ -3,7 +3,7 @@
 //////////////////////////////////////////////////////////////////////
 
 use std::{fs::File, io::{BufReader, Error as IoError}, net::SocketAddr, sync::Arc};
-use hyper::{Body, Request, Response, server::conn::Http};
+use hyper::{Body, Request, Response, server::conn::Http, header::HeaderValue};
 use hyper::service::{make_service_fn, service_fn};
 use tokio::net::TcpListener;
 use tokio_rustls::{
@@ -14,22 +14,35 @@ use tracing::{info, error};
 use crate::metrics::REGISTRY;
 use rcgen::generate_simple_self_signed;
 
-/// Antwortet mit den Prometheus-Metriken, falls Pfad `/metrics`
+const METRICS_TOKEN: &str = "supersecuremetricsaccesskey123";
+
+/// Antwortet mit den Prometheus-Metriken, wenn Token im Header korrekt ist
 async fn handle_metrics(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    if req.uri().path() == "/metrics" {
-        let metric_families = REGISTRY.gather();
-        let mut buf = Vec::new();
-        let encoder = prometheus::TextEncoder::new();
-        if let Err(e) = encoder.encode(&metric_families, &mut buf) {
-            error!("Fehler beim Codieren der Metriken: {:?}", e);
-            return Ok(Response::builder()
-                .status(500)
-                .body(Body::from("Fehler beim Codieren der Metriken"))
-                .unwrap());
+    if req.uri().path() != "/metrics" {
+        return Ok(Response::builder().status(404).body(Body::from("Not Found")).unwrap());
+    }
+
+    match req.headers().get("x-metrics-token") {
+        Some(token) if token == HeaderValue::from_static(METRICS_TOKEN) => {
+            let metric_families = REGISTRY.gather();
+            let mut buf = Vec::new();
+            let encoder = prometheus::TextEncoder::new();
+            if let Err(e) = encoder.encode(&metric_families, &mut buf) {
+                error!("Fehler beim Codieren der Metriken: {:?}", e);
+                return Ok(Response::builder()
+                    .status(500)
+                    .body(Body::from("Fehler beim Codieren der Metriken"))
+                    .unwrap());
+            }
+            Ok(Response::new(Body::from(buf)))
         }
-        Ok(Response::new(Body::from(buf)))
-    } else {
-        Ok(Response::builder().status(404).body(Body::from("Not Found")).unwrap())
+        _ => {
+            error!("Zugriff verweigert: ungültiger oder fehlender Token bei /metrics");
+            Ok(Response::builder()
+                .status(403)
+                .body(Body::from("Forbidden: Ungültiger Token"))
+                .unwrap())
+        }
     }
 }
 
@@ -56,7 +69,7 @@ fn load_tls_config(cert_path: &str, key_path: &str) -> Result<ServerConfig, IoEr
         .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(certs, keys.remove(0))
-        .map_err(|e| IoError::new(std::io::ErrorKind::InvalidData, e))
+        .map_err(|e| IoError::new(std::io::ErrorKind::InvalidData, format!("TLS-Konfiguration ungültig: {:?}", e)))
 }
 
 /// Startet einen TLS-geschützten Prometheus-Metrics-Server mit Datei-Zertifikaten
@@ -138,3 +151,4 @@ pub async fn serve_metrics_tls_generated(
         });
     }
 }
+
