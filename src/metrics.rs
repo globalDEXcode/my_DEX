@@ -16,75 +16,70 @@ use tracing::{info, error};
 lazy_static! {
     pub static ref REGISTRY: Registry = Registry::new();
 
-    // Orders
     pub static ref ORDER_COUNT: IntCounter = register_int_counter!(
         "dex_order_total",
         "Total number of Orders created"
-    ).unwrap();
+    ).expect("Failed to register ORDER_COUNT");
 
     pub static ref ACTIVE_SWAPS: IntGauge = register_int_gauge!(
         "dex_active_swaps",
         "Number of active Atomic Swaps"
-    ).unwrap();
+    ).expect("Failed to register ACTIVE_SWAPS");
 
-    // Node-Starts (wenn Node re-launched etc.)
     pub static ref DEX_NODE_STARTS: IntCounter = register_int_counter!(
         "dex_node_starts_total",
         "Wie oft ein Node-Prozess startete"
-    ).unwrap();
+    ).expect("Failed to register DEX_NODE_STARTS");
 
-    // CRDT Merges
     pub static ref CRDT_MERGE_COUNT: IntCounter = register_int_counter!(
         "dex_crdt_merge_total",
         "Wie oft CRDT-merge_remote aufgerufen wurde"
-    ).unwrap();
+    ).expect("Failed to register CRDT_MERGE_COUNT");
 
-    // HTLC / AtomicSwap Kennzahlen
     pub static ref HTLC_REDEEM_COUNT: IntCounter = register_int_counter!(
         "dex_htlc_redeem_total",
         "Anzahl Redeems in HTLC"
-    ).unwrap();
+    ).expect("Failed to register HTLC_REDEEM_COUNT");
 
     pub static ref HTLC_REFUND_COUNT: IntCounter = register_int_counter!(
         "dex_htlc_refund_total",
         "Anzahl Refunds in HTLC"
-    ).unwrap();
+    ).expect("Failed to register HTLC_REFUND_COUNT");
 
     pub static ref SWAP_SELLER_REDEEM_COUNT: IntCounter = register_int_counter!(
         "dex_swap_seller_redeem_total",
         "Wie oft Seller redeem auf AtomicSwap"
-    ).unwrap();
+    ).expect("Failed to register SWAP_SELLER_REDEEM_COUNT");
 
     pub static ref SWAP_BUYER_REDEEM_COUNT: IntCounter = register_int_counter!(
         "dex_swap_buyer_redeem_total",
         "Wie oft Buyer redeem auf AtomicSwap"
-    ).unwrap();
+    ).expect("Failed to register SWAP_BUYER_REDEEM_COUNT");
 
     pub static ref SWAP_REFUND_COUNT: IntCounter = register_int_counter!(
         "dex_swap_refund_total",
         "Wie oft AtomicSwap refund ausgeführt"
-    ).unwrap();
+    ).expect("Failed to register SWAP_REFUND_COUNT");
 
-    // partial fill
     pub static ref PARTIAL_FILL_COUNT: IntCounter = register_int_counter!(
         "dex_partial_fill_total",
         "Wie oft eine Partial-Fill Operation ausgeführt wurde"
-    ).unwrap();
+    ).expect("Failed to register PARTIAL_FILL_COUNT");
 }
 
 pub fn register_metrics() {
-    REGISTRY.register(Box::new(ORDER_COUNT.clone())).unwrap();
-    REGISTRY.register(Box::new(ACTIVE_SWAPS.clone())).unwrap();
-    REGISTRY.register(Box::new(DEX_NODE_STARTS.clone())).unwrap();
-    REGISTRY.register(Box::new(CRDT_MERGE_COUNT.clone())).unwrap();
+    let _ = REGISTRY.register(Box::new(ORDER_COUNT.clone()));
+    let _ = REGISTRY.register(Box::new(ACTIVE_SWAPS.clone()));
+    let _ = REGISTRY.register(Box::new(DEX_NODE_STARTS.clone()));
+    let _ = REGISTRY.register(Box::new(CRDT_MERGE_COUNT.clone()));
 
-    REGISTRY.register(Box::new(HTLC_REDEEM_COUNT.clone())).unwrap();
-    REGISTRY.register(Box::new(HTLC_REFUND_COUNT.clone())).unwrap();
-    REGISTRY.register(Box::new(SWAP_SELLER_REDEEM_COUNT.clone())).unwrap();
-    REGISTRY.register(Box::new(SWAP_BUYER_REDEEM_COUNT.clone())).unwrap();
-    REGISTRY.register(Box::new(SWAP_REFUND_COUNT.clone())).unwrap();
+    let _ = REGISTRY.register(Box::new(HTLC_REDEEM_COUNT.clone()));
+    let _ = REGISTRY.register(Box::new(HTLC_REFUND_COUNT.clone()));
+    let _ = REGISTRY.register(Box::new(SWAP_SELLER_REDEEM_COUNT.clone()));
+    let _ = REGISTRY.register(Box::new(SWAP_BUYER_REDEEM_COUNT.clone()));
+    let _ = REGISTRY.register(Box::new(SWAP_REFUND_COUNT.clone()));
 
-    REGISTRY.register(Box::new(PARTIAL_FILL_COUNT.clone())).unwrap();
+    let _ = REGISTRY.register(Box::new(PARTIAL_FILL_COUNT.clone()));
 }
 
 pub async fn serve_metrics(addr: SocketAddr) {
@@ -96,12 +91,16 @@ pub async fn serve_metrics(addr: SocketAddr) {
                 let metric_families = REGISTRY.gather();
                 let mut buf = Vec::new();
                 let encoder = TextEncoder::new();
-                encoder.encode(&metric_families, &mut buf).unwrap();
-                Ok::<_, hyper::Error>(Response::new(Body::from(buf)))
+                if let Err(e) = encoder.encode(&metric_families, &mut buf) {
+                    error!("Fehler beim Codieren der Metriken: {:?}", e);
+                    return Ok(Response::builder()
+                        .status(500)
+                        .body(Body::from("Fehler beim Codieren der Metriken"))
+                        .unwrap());
+                }
+                Ok(Response::new(Body::from(buf)))
             } else {
-                Ok::<_, hyper::Error>(
-                    Response::builder().status(404).body(Body::from("Not Found")).unwrap()
-                )
+                Ok(Response::builder().status(404).body(Body::from("Not Found")).unwrap())
             }
         }))
     });
