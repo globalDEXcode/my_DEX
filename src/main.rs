@@ -46,6 +46,8 @@ use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
 use chrono::{Utc};
+mod metrics_tls;
+
 
 use crate::config_loader::{load_config, NodeConfig};
 use crate::node_logic::DexNode;
@@ -93,6 +95,9 @@ use crate::storage::ipfs_storage::{add_file_to_ipfs, cat_file_from_ipfs};
 // Importiere den IPFS-Manager (aus src/ipfs_manager.rs)
 mod ipfs_manager;
 use ipfs_manager::start_ipfs_daemon;
+
+mod metrics_tls;
+use crate::metrics_tls;
 
 // ─────────────────────────────────────────────────────────────
 // Integration des neuen Monitoring-Moduls inklusive metrics_server
@@ -496,21 +501,31 @@ use crate::security::security_validator::AdvancedSecurityValidator;
 async fn main() -> Result<()> {
     init_tracing_with_otel_from_env();
 
-    // Globalen Logger initialisieren
-    let logger: Arc<Logger> = get_global_logger();
-    logger.log_event("system", "Global Logger initialisiert.");
+// Globalen Logger initialisieren
+let logger: Arc<Logger> = get_global_logger();
+logger.log_event("system", "Global Logger initialisiert.");
 
-    // IPFS-Daemon starten (lokal, aus "my_dex/.ipfs/bin/")
-    match start_ipfs_daemon() {
-        Ok(()) => {
-            info!("IPFS daemon successfully started.");
-            logger.log_event("system", "IPFS daemon successfully started.");
-        },
-        Err(e) => {
-            warn!("Error starting IPFS daemon: {}", e);
-            logger.log_event("system", &format!("Error starting IPFS daemon: {}", e));
-        }
+// TLS-Metrics-Server starten (mit rcgen)
+let tls_metrics_addr = "0.0.0.0:9443".parse::<SocketAddr>()?;
+tokio::spawn(async move {
+    if let Err(e) = metrics_tls::serve_metrics_tls_generated(tls_metrics_addr).await {
+        error!("TLS-Metrics-Server konnte nicht gestartet werden: {:?}", e);
     }
+});
+logger.log_event("system", "TLS Metrics Server gestartet.");
+
+
+// IPFS-Daemon starten (lokal, aus "my_dex/.ipfs/bin/")
+match start_ipfs_daemon() {
+    Ok(()) => {
+        info!("IPFS daemon successfully started.");
+        logger.log_event("system", "IPFS daemon successfully started.");
+    },
+    Err(e) => {
+        warn!("Error starting IPFS daemon: {}", e);
+        logger.log_event("system", &format!("Error starting IPFS daemon: {}", e));
+    }
+}
 
     // (1) GlobalSecurity anlegen
     let mut global_sec = security::global_security_facade::GlobalSecuritySystem::new();
