@@ -46,9 +46,10 @@ use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
 use chrono::{Utc};
+use uuid::Uuid;
+use std::fs;
 mod metrics_tls;
 use crate::metrics_tls::init_metrics_token;
-
 
 use crate::config_loader::{load_config, NodeConfig};
 use crate::node_logic::DexNode;
@@ -98,7 +99,7 @@ mod ipfs_manager;
 use ipfs_manager::start_ipfs_daemon;
 
 mod metrics_tls;
-use crate::metrics_tls;
+use crate::metrics_tls::init_metrics_token;
 
 // ─────────────────────────────────────────────────────────────
 // Integration des neuen Monitoring-Moduls inklusive metrics_server
@@ -558,24 +559,37 @@ match start_ipfs_daemon() {
     }
     logger.log_event("system", "Sanktionslisten aktualisiert.");
 
-    // (4) Node-Konfiguration laden
     let cfg_path = "config/node_config.yaml";
-    let config: NodeConfig = match load_config(cfg_path) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            log_error(e);
-            use crate::crypto::fallback_config::{load_backup_config_with_retry, verify_config_signature};
-            let backup_config = load_backup_config_with_retry("config_backup_hash", 5, Duration::from_secs(1)).await?;
-            // config-Signatur wird hier verifiziert => gut
-            if !verify_config_signature(&backup_config, "signature_placeholder", "public_key_placeholder") {
-                return Err(anyhow::anyhow!("Fallback configuration signature is invalid"));
-            }
-            serde_yaml::from_str(&backup_config).context("Failed to parse fallback configuration")?
+let config: NodeConfig = match load_config(cfg_path) {
+    Ok(cfg) => cfg,
+    Err(e) => {
+        log_error(e);
+        use crate::crypto::fallback_config::{load_backup_config_with_retry, verify_config_signature};
+        let backup_config = load_backup_config_with_retry("config_backup_hash", 5, Duration::from_secs(1)).await?;
+        if !verify_config_signature(&backup_config, "signature_placeholder", "public_key_placeholder") {
+            return Err(anyhow::anyhow!("Fallback configuration signature is invalid"));
         }
-    };
-    // TIPP: Du könntest hier optional negative Fee-Werte, etc. abfangen,
-    // falls es in config misst. 
-    logger.log_event("system", "Node-Konfiguration geladen.");
+        serde_yaml::from_str(&backup_config).context("Failed to parse fallback configuration")?
+    }
+};
+
+//  Automatisch node_id generieren, wenn leer oder fehlt
+if config.node_id.trim().is_empty() {
+    let generated_id = format!("node-{}", Uuid::new_v4());
+    config.node_id = generated_id.clone();
+
+    // YAML-Datei aktualisieren
+    let raw_yaml = serde_yaml::to_string(&config)?;
+    fs::write(cfg_path, raw_yaml)?;
+
+    info!("node_id automatisch generiert: {}", generated_id);
+}
+
+
+// ⬇️ Hier Token initialisieren
+init_metrics_token(&config);
+
+logger.log_event("system", "Node-Konfiguration geladen.");
 
     // (5) Logging & Audit einrichten
     init_enhanced_logging(&config.log_level, "./logs", "audit.log");
@@ -1214,3 +1228,4 @@ async fn download_audit_log() -> impl IntoResponse {
         }
     }
 }
+
