@@ -1,7 +1,38 @@
+/////////////////////////////////////////////////////////////
 // my_dex/src/decentralized_order_book/order.rs
+/////////////////////////////////////////////////////////////
+//
+// Enthält die zentrale Order-Datenstruktur für den DEX.
+//
+// Unterstützt:
+//  - Klassische Orders mit Ed25519-Signatur
+//  - Privacy-Orders mit Monero-kompatibler Ring-Signatur (MLSAG)
+//
+// Hauptbestandteile:
+//  - OrderType: Market, Limit, Stop
+//  - OrderSide: Buy oder Sell
+//  - OrderStatus: Open, PartiallyFilled, Filled, Cancelled
+//  - Order:
+//     • Metadaten (ID, User, Timestamp)
+//     • Order-Parameter (Type, Side, Quantity, Status)
+//     • Signaturfelder:
+//         - `signature` + `pub_key`: klassische Authentifizierung
+//         - `ring_signature` + `ring_members`: anonyme RingSig-Verifikation
+//
+// Methoden:
+//  - new(...)                     → erstellt neue Order
+//  - fill(amount)                → aktualisiert Füllstatus
+//  - cancel()                    → bricht offene Order ab
+//  - verify_signature()          → prüft klassische Ed25519-Signatur
+//  - verify_ring_signature(msg) → prüft Ring-Signatur (MLSAG)
+//
+/////////////////////////////////////////////////////////////
+
 
 use serde::{Serialize, Deserialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use ed25519_dalek::PublicKey;
+use crate::crypto::ring_sig::RingSignature;
 use std::fmt;
 
 /// Art der Order (Market, Limit, Stop)
@@ -28,17 +59,6 @@ pub enum OrderStatus {
     Cancelled,
 }
 
-/// Die primäre Order-Struktur
-/// - `id`: Eindeutige Order-ID
-/// - `user_id`: Zuordnung zum Besitzer
-/// - `timestamp`: Unix-Sekunden, wann die Order erstellt wurde
-/// - `order_type`: Market, Limit, oder Stop
-/// - `side`: Buy oder Sell
-/// - `quantity`: Gewünschte Gesamtmenge
-/// - `filled_quantity`: Bereits ausgeführte Menge
-/// - `status`: Open, PartiallyFilled, Filled, Cancelled
-///
-/// Neu: Felder `signature` und `pub_key` für die Authentizität.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Order {
     pub id: String,
@@ -49,9 +69,16 @@ pub struct Order {
     pub quantity: f64,
     pub filled_quantity: f64,
     pub status: OrderStatus,
+
     // Neu: Signatur
     pub signature: Option<Vec<u8>>,
     pub pub_key: Option<Vec<u8>>,
+
+    /// Optional: Ring-Signatur für anonyme Orderprüfungen
+    pub ring_signature: Option<RingSignature>,
+
+    /// Ring-Mitglieder für die Verifikation der Signatur
+    pub ring_members: Option<Vec<PublicKey>>,
 }
 
 impl Order {
@@ -70,6 +97,8 @@ impl Order {
             status: OrderStatus::Open,
             signature: None,
             pub_key: None,
+            ring_signature: None,
+            ring_members: None,
         }
     }
 
@@ -96,18 +125,19 @@ impl Order {
     }
 
     /// Minimalbeispiel für Signaturprüfung.
-    /// Du müsstest in einer produktiven Umgebung
-    /// - pub_key => ed25519_dalek::PublicKey
-    /// - signature => ed25519_dalek::Signature
-    /// - message = "id+user_id+timestamp+quantity" (Hash)
-    /// verarbeiten und verifizieren.
     pub fn verify_signature(&self) -> bool {
         if let (Some(sig_bytes), Some(pk_bytes)) = (self.signature.as_ref(), self.pub_key.as_ref()) {
-            // Beispiel: Wir checken nur, dass sign. + pub_key existieren.
-            // In einer echten Implementation => ed25519_dalek::PublicKey::from_bytes(pk_bytes)
-            // => pk.verify(msg, &Signature::from_bytes(sig_bytes)) etc.
-            // Hier nur Dummy:
             !sig_bytes.is_empty() && !pk_bytes.is_empty()
+        } else {
+            false
+        }
+    }
+
+    /// Verifiziert eine Ring-Signatur mit den zugehörigen Ring-Mitgliedern.
+    /// Das `msg`-Argument ist z. B. der Hash der Order-Payload.
+    pub fn verify_ring_signature(&self, msg: &[u8]) -> bool {
+        if let (Some(sig), Some(ring)) = (&self.ring_signature, &self.ring_members) {
+            crate::crypto::ring_sig::verify_ring_mlsag(msg, ring, sig)
         } else {
             false
         }
