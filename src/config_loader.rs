@@ -1,8 +1,8 @@
-// src/config_loader.rs
+// my_dex/src/config_loader.rs
 //
 // Lädt die NodeConfig aus einer YAML-Datei, z. B. "config/node_config.yaml".
-// Enthält Felder für DB-Retries, Merge-Retries, HSM/TPM (PKCS#11), 
-// NTP, STUN/TURN, etc.
+// Enthält Felder für DB-Retries, Merge-Retries, HSM/TPM (PKCS#11),
+// NTP, STUN/TURN, TLS/mTLS-Konfiguration usw.
 //
 
 use serde::{Deserialize, Serialize};
@@ -72,10 +72,29 @@ pub struct NodeConfig {
 
     #[serde(default)]
     pub turn_password: String,
+
+    // NEU: TLS / Metrics-Absicherung
+    #[serde(default)]
+    pub metrics_token: Option<String>,
+
+    #[serde(default)]
+    pub metrics_enable_tls: bool,
+
+    #[serde(default)]
+    pub metrics_require_mtls: bool,
+
+    #[serde(default)]
+    pub metrics_tls_cert_path: Option<String>,
+
+    #[serde(default)]
+    pub metrics_tls_key_path: Option<String>,
+
+    #[serde(default)]
+    pub metrics_tls_client_ca_path: Option<String>,
 }
 
 /// Lädt die Config aus einer YAML-Datei.
-/// Beispiel-Aufruf: 
+/// Beispiel-Aufruf:
 ///   let cfg = load_config("config/node_config.yaml")?;
 #[instrument(name = "load_config", skip(path))]
 pub fn load_config(path: &str) -> Result<NodeConfig> {
@@ -89,9 +108,9 @@ pub fn load_config(path: &str) -> Result<NodeConfig> {
 
     // Kurzes Logging
     info!("NodeConfig geladen => node_id={}, log_level={}, ntp_servers={:?}, stun_server={}, turn_server={}",
-        cfg.node_id, 
-        cfg.log_level, 
-        cfg.ntp_servers, 
+        cfg.node_id,
+        cfg.log_level,
+        cfg.ntp_servers,
         cfg.stun_server,
         cfg.turn_server
     );
