@@ -117,3 +117,38 @@ pub fn load_config(path: &str) -> Result<NodeConfig> {
 
     Ok(cfg)
 }
+
+/// Validiert kritische Felder in der Konfiguration.
+pub fn validate_config(cfg: &NodeConfig) -> Result<(), String> {
+    // node_id darf nicht leer sein
+    if cfg.node_id.trim().is_empty() {
+        return Err("Konfig-Fehler: node_id darf nicht leer sein.".into());
+    }
+
+// TLS aktiv, aber kein Pfad
+if cfg.metrics_enable_tls {
+    if let Some(cert_path) = &cfg.metrics_tls_cert_path {
+        if !Path::new(cert_path).exists() {
+            return Err(format!("TLS aktiviert, aber Zertifikat '{}' existiert nicht.", cert_path));
+        }
+    }
+
+    if let Some(key_path) = &cfg.metrics_tls_key_path {
+        if !Path::new(key_path).exists() {
+            return Err(format!("TLS aktiviert, aber privater Schlüssel '{}' existiert nicht.", key_path));
+        }
+    }
+
+    if cfg.metrics_require_mtls {
+        if let Some(ca_path) = &cfg.metrics_tls_client_ca_path {
+            if !Path::new(ca_path).exists() {
+                return Err(format!("mTLS aktiv, aber Client-CA '{}' existiert nicht.", ca_path));
+            }
+        } else {
+            return Err("mTLS ist aktiv, aber 'metrics_tls_client_ca_path' fehlt.".into());
+        }
+    }
+}
+
+    Ok(())
+}
