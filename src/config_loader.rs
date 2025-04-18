@@ -125,6 +125,16 @@ pub fn validate_config(cfg: &NodeConfig) -> Result<(), String> {
         return Err("Konfig-Fehler: node_id darf nicht leer sein.".into());
     }
 
+    
+// IP:Port prüfen
+validate_socket_addr("listen_addr", &cfg.listen_addr)?;
+validate_socket_addr("metrics_addr", &cfg.metrics_addr)?;
+
+// Sicherstellen, dass beide Adressen nicht identisch sind
+if cfg.listen_addr == cfg.metrics_addr {
+    return Err("Konfig-Fehler: 'listen_addr' und 'metrics_addr' dürfen nicht identisch sein.".into());
+}
+
 // TLS aktiv, aber kein Pfad
 if cfg.metrics_enable_tls {
     if let Some(cert_path) = &cfg.metrics_tls_cert_path {
@@ -151,4 +161,45 @@ if cfg.metrics_enable_tls {
 }
 
     Ok(())
+}
+
+/// Prüft, ob ein gegebener String eine gültige Socket-Adresse (IP:Port) ist.
+fn validate_socket_addr(field_name: &str, addr: &str) -> Result<(), String> {
+    match addr.parse::<SocketAddr>() {
+        Ok(socket) => {
+            if socket.port() < 1024 {
+                return Err(format!(
+                    "Port für '{}' liegt unter 1024 ({}), bitte vermeiden!",
+                    field_name, socket.port()
+                ));
+            }
+
+            if is_sensitive_port(socket.port()) {
+                return Err(format!(
+                    "Port für '{}' ({}) ist als kritisch bekannt (z. B. SSH, SQL, Redis) und sollte vermieden werden.",
+                    field_name, socket.port()
+                ));
+            }
+
+            Ok(())
+        }
+        Err(_) => Err(format!(
+            "Ungültige Socket-Adresse für '{}': {}",
+            field_name, addr
+        )),
+    }
+}
+
+/// Gibt true zurück, wenn ein Port als sensibel bekannt ist.
+fn is_sensitive_port(port: u16) -> bool {
+    matches!(
+        port,
+        22    // SSH
+        | 25   // SMTP
+        | 80   // HTTP
+        | 443  // HTTPS
+        | 3306 // MySQL
+        | 5432 // PostgreSQL
+        | 6379 // Redis
+    )
 }
