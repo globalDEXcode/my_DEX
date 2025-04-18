@@ -1,13 +1,52 @@
 ///////////////////////////////////////////////////////////
 // my_dex/src/decentralized_order_book/order_book.rs
 ///////////////////////////////////////////////////////////
+//
+// CrdtOrderBook & OrderBook:
+// Kernkomponenten zur Verwaltung von Orders im dezentralen Orderbuch.
+//
+// Unterstützt:
+//  - Delta-Synchronisation per Gossip (OrderDelta)
+//  - Klassische Ed25519-Signaturprüfung
+//  - Anonyme Ring-Signaturverifikation (MLSAG)
+//  - Stop-Orders, Matching, Conflict Resolution
+//
+// Hauptkomponenten:
+//
+// 1) OrderDelta
+//    - Add(order)
+//    - Remove { order_id, timestamp }
+//
+// 2) CrdtOrderBook
+//    - orders: HashMap<String, Order>
+//    - add_order(...): prüft Signatur (klassisch oder Ring), sendet Delta
+//    - apply_delta(...): übernimmt Änderungen anderer Knoten, mit Prüfung
+//    - merge(...): Timestamp-basierte CRDT-Merge-Logik
+//
+// 3) OrderBook (Wrapper für CRDT + Matching)
+//    - node_id: eindeutiger Knotenbezeichner
+//    - conflict_resolver: verfolgt Order-Änderungen
+//    - add_order(...): akzeptiert Stop-Orders, transformiert ggf. in Market
+//    - match_orders(...): Matching-Logik für Buy/Sell-Paare
+//    - cancel_order(...): setzt Status auf Cancelled
+//    - fill_order(...): aktualisiert Füllmenge
+//
+// 4) Delta-Gossip-Synchronisierung
+//    - delta_gossip_synchronizer(...): übernimmt OrderDelta von P2P
+//    - create_order_book_with_delta(...): erstellt CRDT + Delta-Kanal
+//
+///////////////////////////////////////////////////////////
+
 
 use std::collections::HashMap;
 use crate::decentralized_order_book::order::{Order, OrderStatus, OrderSide, OrderType};
 use crate::decentralized_order_book::conflict_resolution::ConflictResolution;
+use crate::error::DexError;
+use crate::logging::enhanced_logging::{log_error, write_audit_log};
+use crate::crypto::ring_sig::RingSignature;
+use ed25519_dalek::PublicKey;
 
 /// Neue Definitionen für die delta-basierte Synchronisation
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum OrderDelta {
     Add(Order),
@@ -64,21 +103,36 @@ impl CrdtOrderBook {
         self.orders.values().cloned().collect()
     }
 
-    /// Fügt eine Order ein (oder überschreibt sie) und sendet ein entsprechendes Delta-Update.
-    pub fn add_order(&mut self, order: Order) {
-        // Prüfen, ob signiert
-        if !order.verify_signature() {
-            println!("Warn: add_order() => ungültige Order-Signatur => abgelehnt, ID={}", order.id);
-            return;
-        }
+/// Fügt eine Order ein (oder überschreibt sie) und sendet ein entsprechendes Delta-Update.
+/// Unterstützt klassische Ed25519-Signaturen und Monero-kompatible Ring-Signaturen (MLSAG).
+pub fn add_order(&mut self, order: Order) {
+    use sha2::{Sha256, Digest};
 
-        self.orders.insert(order.id.clone(), order.clone());
-        if let Some(sender) = &self.delta_sender {
-            if let Err(e) = sender.send(OrderDelta::Add(order)) {
-                println!("Failed to send delta update for add_order: {:?}", e);
-            }
+    // Erzeuge Nachricht für die Signaturprüfung (z. B. Order-Hash)
+    let order_hash = format!(
+        "{}:{}:{}:{}",
+        order.id, order.user_id, order.timestamp, order.quantity
+    );
+    let hash_bytes = Sha256::digest(order_hash.as_bytes());
+
+    // Prüfe klassische oder Ring-Signatur
+    let is_valid = order.verify_signature() || order.verify_ring_signature(&hash_bytes);
+
+    if !is_valid {
+        println!("❌ add_order(): Signatur ungültig => Order {} abgelehnt", order.id);
+        return;
+    }
+
+    // Einfügen in CRDT-OrderBook
+    self.orders.insert(order.id.clone(), order.clone());
+
+    // Optional: Delta-Update versenden
+    if let Some(sender) = &self.delta_sender {
+        if let Err(e) = sender.send(OrderDelta::Add(order)) {
+            println!("Failed to send delta update for add_order: {:?}", e);
         }
     }
+}
 
     /// Entfernt eine gegebene Order (falls vorhanden) und sendet ein entsprechendes Delta-Update.
     pub fn remove_order(&mut self, order: &Order) {
@@ -91,20 +145,33 @@ impl CrdtOrderBook {
         }
     }
 
-    /// Wendet ein Delta-Update auf das OrderBook an.
     pub fn apply_delta(&mut self, delta: OrderDelta) {
+        use sha2::{Sha256, Digest};
+    
         match delta {
             OrderDelta::Add(order) => {
-                if order.verify_signature() {
+                let order_hash = format!(
+                    "{}:{}:{}:{}",
+                    order.id, order.user_id, order.timestamp, order.quantity
+                );
+                let hash_bytes = Sha256::digest(order_hash.as_bytes());
+    
+                if order.verify_signature() || order.verify_ring_signature(&hash_bytes) {
                     self.orders.insert(order.id.clone(), order);
+                } else {
+                    println!("❌ apply_delta(): Ungültige Signatur für Order {}", order.id);
+                    write_audit_log(&format!(
+                        "🛑 Ungültige Signatur abgelehnt: Order ID = {}",
+                        order.id
+                    ));
                 }
+    
             },
             OrderDelta::Remove { order_id, timestamp: _ } => {
                 self.orders.remove(&order_id);
             },
         }
     }
-}
 
 /// Dieses Struct verwaltet das CRDT-OrderBook und führt das Matching
 /// (ohne Settlement/Escrow-Logik).
