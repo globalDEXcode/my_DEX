@@ -12,6 +12,7 @@ node_id: "NodeA"
 listen_addr: "127.0.0.1:9000"
 metrics_addr: "127.0.0.1:9100"
 jaeger_addr: "127.0.0.1:14268/api/traces"
+
 atomic_swap_timeout_sec: 30
 crdt_merge_interval_sec: 10
 log_level: "info"
@@ -19,18 +20,18 @@ db_path: "dex_data"
 
 db_max_retries: 3
 db_backoff_sec: 2
-
 merge_max_retries: 3
 merge_backoff_sec: 1
 
 use_noise: true
 
+# KEYS/SECRETS -> per ENV-VARS laden!
 keystore_path: "keystore.json"
-keystore_pass: "SUPER_SECRET"    # Achtung: Nur Demo – in Production NICHT Klartext
+keystore_pass_env: "DEX_KEYSTORE_PASS"
 allowed_node_pubkeys: []
 
-order_timeout_sec: 86400     # 24 Stunden
-swap_timeout_sec: 7200       # 2 Stunden
+order_timeout_sec: 86400
+swap_timeout_sec: 7200
 
 num_shards: 8
 partial_fill_min_amount: 0.0001
@@ -38,22 +39,34 @@ partial_fill_min_amount: 0.0001
 use_hardware: false
 pkcs11_lib_path: "/usr/lib/opensc-pkcs11.so"
 slot_id: 0
-hsm_pin: "1234"              # Nur Demo – in Production NICHT Klartext
+hsm_pin_env: "DEX_HSM_PIN"
 
-# Neue Felder für NTP-Zeitsynchronisation:
+# NTP-Zeitsynchronisation
 ntp_servers:
   - "0.europe.pool.ntp.org"
   - "1.europe.pool.ntp.org"
   - "2.europe.pool.ntp.org"
   - "3.europe.pool.ntp.org"
 
-# Neue Felder für STUN/TURN (NAT Traversal)
+# STUN/TURN (NAT Traversal)
 stun_server: "stun.example.com:3478"
 turn_server: "turn.example.com:3478"
 turn_username: "myuser"
-turn_password: "mypass"      # Nur Demo – in Production NICHT Klartext
+turn_password_env: "DEX_TURN_PASS"
 
-# Neue Felder für Settlement-Fees
+# Settlement-Fees
 settlement_fees:
-  standard: 0.001         # z. B. 0.1%
-  atomic_swap: 0.002      # z. B. 0.2%
+  standard: 0.001
+  atomic_swap: 0.002
+
+# -------------------------------------------------------------
+# MONITORING / TLS-METRICS
+# -------------------------------------------------------------
+metrics_token: "supersecuremetricsaccesskey123"
+metrics_enable_tls: true
+metrics_require_mtls: false
+
+# Optional: Pfade zu Datei-basierten Zertifikaten
+metrics_tls_cert_path: "config/ssl/server_cert.pem"
+metrics_tls_key_path: "config/ssl/server_key.pem"
+metrics_tls_client_ca_path: "config/ssl/ca_cert.pem"
