@@ -48,10 +48,16 @@ use once_cell::sync::Lazy;
 use chrono::{Utc};
 use uuid::Uuid;
 use std::fs;
+use std::path::Path;
 mod metrics_tls;
 use crate::metrics_tls::init_metrics_token;
 
 use crate::config_loader::{load_config, NodeConfig};
+use crate::config_loader::validate_config;
+use sha2::{Sha256, Digest};
+use chrono::Utc;
+use hex;
+
 use crate::node_logic::DexNode;
 use crate::storage::db_layer::{DexDB, CrdtSnapshot};
 use crate::tracing_setup::shutdown_tracing;
@@ -572,6 +578,47 @@ let config: NodeConfig = match load_config(cfg_path) {
         serde_yaml::from_str(&backup_config).context("Failed to parse fallback configuration")?
     }
 };
+
+// Konfiguration validieren (Pfad, TLS, mTLS etc.)
+if let Err(e) = validate_config(&config) {
+    error!("Konfigurationsvalidierung fehlgeschlagen: {}", e);
+    return Err(anyhow::anyhow!(e));
+}
+
+// Node-ID loggen (sichtbar)
+let mut hasher = Sha256::new();
+hasher.update(config.node_id.as_bytes());
+let hash = hasher.finalize();
+let node_hash_hex = hex::encode(hash);
+
+info!("Node-ID: {}", config.node_id);
+info!("node_id SHA256-Hash: {}", node_hash_hex);
+
+// Anonymisierte Telemetrie-ID (z. B. für globale passive Analyse)
+let today = Utc::now().date_naive().to_string();
+let anon_input = format!("{}:{}", config.node_id, today);
+let mut hasher = Sha256::new();
+hasher.update(anon_input.as_bytes());
+let telemetry_id = hex::encode(hasher.finalize());
+
+info!("Anonymisierte Telemetrie-ID (heute): {}", telemetry_id);
+
+// Konfiguration validieren
+use crate::config_loader::validate_config;
+
+if let Err(e) = validate_config(&config) {
+    error!("Konfigurationsvalidierung fehlgeschlagen: {}", e);
+    return Err(anyhow::anyhow!(e));
+}
+
+info!(
+    "TLS aktiviert: {}, mTLS aktiviert: {}, Zertifikatspfad gesetzt: cert={}, key={}, client_ca={}",
+    config.metrics_enable_tls,
+    config.metrics_require_mtls,
+    config.metrics_tls_cert_path.is_some(),
+    config.metrics_tls_key_path.is_some(),
+    config.metrics_tls_client_ca_path.is_some(),
+);
 
 //  Automatisch node_id generieren, wenn leer oder fehlt
 if config.node_id.trim().is_empty() {
