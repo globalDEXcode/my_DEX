@@ -2,22 +2,18 @@
 // my_dex/src/settlement/secured_settlement.rs
 ///////////////////////////////////////////////////////////
 //
-// Dieses Modul implementiert einen zusätzlichen Sicherheitslayer für
-// den Settlement-Prozess. Es definiert einen Trait SettlementEngineTrait,
-// der die Methode finalize_trade kapselt. Der SecuredSettlementEngine-Decorator
-// umschließt eine bestehende Settlement-Engine und führt vor der finalen Abwicklung
-// eines Settlements eine Sicherheitsvalidierung (via SecurityValidator) durch.
-// Dadurch wird sichergestellt, dass nur validierte Settlements abgeschlossen werden.
+// Dieses Modul implementiert einen Sicherheits-Wrapper für den Settlement-Prozess.
+// Der Trait `SettlementEngineTrait` definiert das Interface für Trade-Abwicklung.
+// Die `SecuredSettlementEngine` erweitert jede kompatible Engine um:
 //
-// NEU (Sicherheitsupdate):
-//  1) Wir fügen Kommentare hinzu, um auf potenzielle Blockaden hinzuweisen,
-//     falls validate_settlement(...) ein Stub ist, das immer Err(...) zurückliefert.
-//  2) Du kannst negative oder 0.0-Amounts abfangen, um Missbrauch zu verhindern.
-//  3) In Production: ggf. Abschaltbarer Modus, falls dein ZK/Security-Validator
-//     noch nicht fertig ist (oder immer scheitert).
+// - Sicherheitsvalidierung vor dem Abwickeln von Trades
+// - Prüfung auf 0 oder negative Beträge (base / quote)
+// - Klares Logging und Fehlerbehandlung bei ungültigen Settlements
+//
 ///////////////////////////////////////////////////////////
 
 use anyhow::Result;
+use tracing::error;
 use crate::error::DexError;
 use crate::security::security_validator::{SecurityValidator, AdvancedSecurityValidator};
 
@@ -84,9 +80,6 @@ impl SettlementEngineTrait for SettlementEngine {
         base_amount: f64,
         quote_amount: f64,
     ) -> Result<(), DexError> {
-        // HINWEIS: Du könntest hier negative/0-Werte abfangen => 
-        // if base_amount <= 0.0 || quote_amount <= 0.0 { return Err(...) }
-        // Sonst kann ein Angreifer mit 0.0 die Engine verwirren.
         self.lock_funds(buyer, base_asset, base_amount)?;
         self.lock_funds(seller, quote_asset, quote_amount)?;
         self.release_funds(buyer, base_asset, base_amount)?;
@@ -119,15 +112,27 @@ impl<E: SettlementEngineTrait, S: SecurityValidator> SettlementEngineTrait for S
         base_amount: f64,
         quote_amount: f64,
     ) -> Result<(), DexError> {
+        // Neue Sicherheitsprüfung: Basiswerte dürfen nicht <= 0 sein
+        if base_amount <= 0.0 || quote_amount <= 0.0 {
+            return Err(DexError::Other("Abrechnung mit 0 oder negativen Beträgen nicht erlaubt".into()));
+        }
+
         let settlement_info = format!(
             "Buyer:{}; Seller:{}; BaseAsset:{}; QuoteAsset:{}; BaseAmt:{}; QuoteAmt:{}",
             buyer, seller, base_asset, quote_asset, base_amount, quote_amount
         );
-        // NEU: Wenn validator.validate_settlement(...) in einem Stub immer Err(...) wirft, 
-        // blockierst du dein System. => Ggf. optional config: use_zk_snarks => wenn false => skip
-        self.validator.validate_settlement(&settlement_info)?;
-        // Wenn die Validierung erfolgreich ist, delegieren wir an die innere Engine.
-        self.inner.finalize_trade(buyer, seller, base_asset, quote_asset, base_amount, quote_amount)
+
+        match self.validator.validate_settlement(&settlement_info) {
+            Ok(_) => {
+                // Prüfung erfolgreich → weiterleiten an echte Engine
+                self.inner.finalize_trade(buyer, seller, base_asset, quote_asset, base_amount, quote_amount)
+            },
+            Err(e) => {
+                // Validierung fehlgeschlagen → blockieren und loggen
+                error!("SecuredSettlementEngine: Sicherheitsprüfung fehlgeschlagen: {:?}", e);
+                Err(DexError::Other("Sicherheitsprüfung für Settlement fehlgeschlagen".into()))
+            }
+        }
     }
 }
 
@@ -135,13 +140,28 @@ impl<E: SettlementEngineTrait, S: SecurityValidator> SettlementEngineTrait for S
 mod tests {
     use super::*;
     use crate::security::security_validator::AdvancedSecurityValidator;
-    
+
     #[test]
     fn test_secured_settlement_finalize() {
         let base_engine = SettlementEngine::new();
         let validator = AdvancedSecurityValidator::new();
         let mut secured_engine = SecuredSettlementEngine::new(base_engine, validator);
+
         let result = secured_engine.finalize_trade("buyer", "seller", "BTC", "USDT", 1.0, 50000.0);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Settlement mit gültigen Beträgen sollte erfolgreich sein");
+    }
+
+    #[test]
+    fn test_secured_settlement_rejects_invalid_amounts() {
+        let base_engine = SettlementEngine::new();
+        let validator = AdvancedSecurityValidator::new();
+        let mut secured_engine = SecuredSettlementEngine::new(base_engine, validator);
+
+        let result = secured_engine.finalize_trade("buyer", "seller", "BTC", "USDT", 0.0, 0.0);
+
+        assert!(
+            result.is_err(),
+            "Settlement mit 0-Werten muss abgelehnt werden"
+        );
     }
 }
