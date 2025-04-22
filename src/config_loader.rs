@@ -8,8 +8,11 @@
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use std::fs;
+use std::net::SocketAddr;
+use std::path::Path;
 use tracing::{info, instrument};
 use crate::error::DexError;
+use keyring::Keyring;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NodeConfig {
@@ -95,7 +98,7 @@ pub struct NodeConfig {
 
 /// Lädt die Config aus einer YAML-Datei.
 /// Beispiel-Aufruf:
-///   let cfg = load_config("config/node_config.yaml")?;
+///   let mut cfg = load_config("config/node_config.yaml")?;
 #[instrument(name = "load_config", skip(path))]
 pub fn load_config(path: &str) -> Result<NodeConfig> {
     // Datei einlesen
@@ -103,7 +106,7 @@ pub fn load_config(path: &str) -> Result<NodeConfig> {
         .map_err(|e| DexError::Other(format!("Fehler beim Lesen der Config-Datei {}: {:?}", path, e)))?;
 
     // YAML -> NodeConfig
-    let cfg: NodeConfig = serde_yaml::from_str(&content)
+    let mut cfg: NodeConfig = serde_yaml::from_str(&content)
         .map_err(|e| DexError::Other(format!("YAML-Deserialization error: {:?}", e)))?;
 
     // Kurzes Logging
@@ -115,6 +118,18 @@ pub fn load_config(path: &str) -> Result<NodeConfig> {
         cfg.turn_server
     );
 
+    // Secrets aus OS-Keyring laden
+    // Wir verwenden hier den aktuellen Wert von cfg.keystore_pass als Key
+    let keystore_pass = Keyring::new("my-dex", &cfg.keystore_pass)
+        .get_password()
+        .map_err(|e| DexError::Other(format!("Fehler beim Auslesen des Keystore-PIN: {}", e)))?;
+    cfg.keystore_pass = keystore_pass;
+
+    let hsm_pin = Keyring::new("my-dex", &cfg.hsm_pin)
+        .get_password()
+        .map_err(|e| DexError::Other(format!("Fehler beim Auslesen des HSM-PIN: {}", e)))?;
+    cfg.hsm_pin = hsm_pin;
+
     Ok(cfg)
 }
 
@@ -125,40 +140,39 @@ pub fn validate_config(cfg: &NodeConfig) -> Result<(), String> {
         return Err("Konfig-Fehler: node_id darf nicht leer sein.".into());
     }
 
-    
-// IP:Port prüfen
-validate_socket_addr("listen_addr", &cfg.listen_addr)?;
-validate_socket_addr("metrics_addr", &cfg.metrics_addr)?;
+    // IP:Port prüfen
+    validate_socket_addr("listen_addr", &cfg.listen_addr)?;
+    validate_socket_addr("metrics_addr", &cfg.metrics_addr)?;
 
-// Sicherstellen, dass beide Adressen nicht identisch sind
-if cfg.listen_addr == cfg.metrics_addr {
-    return Err("Konfig-Fehler: 'listen_addr' und 'metrics_addr' dürfen nicht identisch sein.".into());
-}
-
-// TLS aktiv, aber kein Pfad
-if cfg.metrics_enable_tls {
-    if let Some(cert_path) = &cfg.metrics_tls_cert_path {
-        if !Path::new(cert_path).exists() {
-            return Err(format!("TLS aktiviert, aber Zertifikat '{}' existiert nicht.", cert_path));
-        }
+    // Sicherstellen, dass beide Adressen nicht identisch sind
+    if cfg.listen_addr == cfg.metrics_addr {
+        return Err("Konfig-Fehler: 'listen_addr' und 'metrics_addr' dürfen nicht identisch sein.".into());
     }
 
-    if let Some(key_path) = &cfg.metrics_tls_key_path {
-        if !Path::new(key_path).exists() {
-            return Err(format!("TLS aktiviert, aber privater Schlüssel '{}' existiert nicht.", key_path));
-        }
-    }
-
-    if cfg.metrics_require_mtls {
-        if let Some(ca_path) = &cfg.metrics_tls_client_ca_path {
-            if !Path::new(ca_path).exists() {
-                return Err(format!("mTLS aktiv, aber Client-CA '{}' existiert nicht.", ca_path));
+    // TLS aktiv, aber kein Pfad
+    if cfg.metrics_enable_tls {
+        if let Some(cert_path) = &cfg.metrics_tls_cert_path {
+            if !Path::new(cert_path).exists() {
+                return Err(format!("TLS aktiviert, aber Zertifikat '{}' existiert nicht.", cert_path));
             }
-        } else {
-            return Err("mTLS ist aktiv, aber 'metrics_tls_client_ca_path' fehlt.".into());
+        }
+
+        if let Some(key_path) = &cfg.metrics_tls_key_path {
+            if !Path::new(key_path).exists() {
+                return Err(format!("TLS aktiviert, aber privater Schlüssel '{}' existiert nicht.", key_path));
+            }
+        }
+
+        if cfg.metrics_require_mtls {
+            if let Some(ca_path) = &cfg.metrics_tls_client_ca_path {
+                if !Path::new(ca_path).exists() {
+                    return Err(format!("mTLS aktiv, aber Client-CA '{}' existiert nicht.", ca_path));
+                }
+            } else {
+                return Err("mTLS ist aktiv, aber 'metrics_tls_client_ca_path' fehlt.".into());
+            }
         }
     }
-}
 
     Ok(())
 }
@@ -203,3 +217,4 @@ fn is_sensitive_port(port: u16) -> bool {
         | 6379 // Redis
     )
 }
+
