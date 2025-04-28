@@ -1,0 +1,125 @@
+///////////////////////////////////////////////////////////
+// my_dex/cargo.toml
+///////////////////////////////////////////////////////////
+//
+// NEU (Sicherheitsupdate):
+// - Hinzugefügt: confy = "0.5" (für das Laden der Config)
+// - Hinzugefügt: sled = "0.34" (für die CRDT-Speicherung in DexNode)
+// 
+// Alle anderen Einträge bleiben unverändert.
+// Du kannst sie ggf. an deine Versionsanforderungen anpassen.
+//
+[package]
+name = "my_dex"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+# Asynchrone Runtime & Utility
+tokio = { version = "1.28", features = ["full"] }
+anyhow = "1.0"
+async_trait = "0.1"  # Neu hinzugefügt für asynchrone Traits
+
+# (De)Serialisierung (YAML/TOML/JSON)
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1.0"
+bincode = "1.3"
+
+# Kryptographie, Hashing, Signatur, etc.
+sha2 = "0.10"
+rand = "0.8"
+secp256k1 = "0.26"
+threshold-crypto = "0.4"
+blake2 = "0.9"
+
+# CRDT / Once-Cell / Lazy
+once_cell = "1.17"
+lazy_static = "1.4"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+env_logger = "0.9"
+tracing-appender = "0.2"  # Für File-Logging (RollingFileAppender)
+
+# Metriken (Prometheus) + HTTP
+prometheus = "0.14"
+hyper = "0.14"
+
+# Distributed Tracing (optional)
+opentelemetry = "0.18"
+tracing-opentelemetry = "0.19"
+opentelemetry-jaeger = "0.18"
+
+# Noise etc. (p2p-layer)
+snow = "0.7"
+
+# Dev / Error
+thiserror = "1.0"
+
+# RocksDB für persistente Speicherung
+rust-rocksdb = "0.17"
+
+# RPC Client (Bitcoin Core, etc.)
+reqwest = { version = "0.11", features = ["blocking", "rustls-tls"] }
+bitcoincore-rpc = "0.18"
+
+# CSV-Parsing
+csv = "1.1"
+
+# TLS und mTLS
+tokio-rustls = "0.23"
+rustls = "0.20"
+rustls-pemfile = "1.0"
+webpki-roots = "0.22"
+
+# Zusätzliche Tools (NTP, UPnP, GeoIP etc.)
+sntpc = "0.6"
+igd = "0.13"
+maxminddb = "0.17"
+
+# PKCS#11 / Nitrokey – Hardware-Lösung
+cryptoki = "0.9"
+
+# Signaturen (Fallback für ed25519)
+ed25519-dalek = "1.2"
+hex = "0.4"
+
+# Noise, Monero, STUN, Tor
+monero = "0.17"
+curve25519-dalek = "4.0.0"
+arti-client = "0.7"
+rust-stun = "0.2"
+
+# LAN Peer-Discovery
+libmdns = "0.8.2"
+
+# NEU: BIP39, rust-bitcoin + litecoin, ethers
+bip39 = "1.1"
+bitcoin = "0.30"
+litecoin = "0.1"
+ethers = "2.0"
+
+# NEU: Nanoid
+nanoid = "0.4"
+
+# Cron-Jobs & Scheduling
+tokio-cron-scheduler = "0.9"
+
+# Decimal-Bibliothek
+rust_decimal = "1.34"
+
+# WebSocket für Echtzeitkurs-Daten (optional)
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+
+# HTTP-Server Framework (für REST-Endpunkte etc.)
+axum = "0.6"
+
+# NEU (für DexNode):
+confy = "0.5"
+sled = "0.34"
+
+[dev-dependencies]
+tokio = { version = "1.28", features = ["full"] }
+criterion = "0.3"
